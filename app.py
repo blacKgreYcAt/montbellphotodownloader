@@ -148,7 +148,7 @@ def extract_color_code(filename):
 
 # --- UI 介面 ---
 st.title("🏔️ Montbell 下載器 Pro")
-st.caption("自動生成顏色報表 | iOS Style")
+st.caption("v1.2 自動生成顏色報表 | 支援 disp.php")
 
 # 1. 檔案上傳
 uploaded_file = st.file_uploader("📂 上傳 Excel (含型號欄位)", type=['xlsx', 'xls'])
@@ -173,9 +173,8 @@ if uploaded_file:
             batch_options = [f"📦 第 {i+1} 批 (型號 {i*BATCH_SIZE+1} - {min((i+1)*BATCH_SIZE, total_items)})" for i in range(total_batches)]
             selected_batch_str = st.selectbox("選擇批次", batch_options)
             
-            # [修正] 使用 Regex 抓取第一個數字，避免抓到中文或符號
+            # 使用 Regex 抓取第一個數字
             try:
-                # 這裡會抓到字串中的第一個數字，例如 "📦 第 1 批" 會抓到 "1"
                 batch_number = int(re.search(r'\d+', selected_batch_str).group())
                 batch_index = batch_number - 1
             except Exception as e:
@@ -235,8 +234,15 @@ if uploaded_file:
                             resp = requests.get(f"{domain}/goods/list_search.php", params={'top_sk': model_id}, headers=get_headers())
                             soup = BeautifulSoup(resp.content, 'html.parser')
                             for l in soup.find_all('a', href=True):
-                                if 'goods/detail.php' in l['href']: target_urls.append(urljoin(resp.url, l['href']))
-                            if not target_urls and 'goods/detail.php' in resp.url: target_urls.append(resp.url)
+                                # 修正：同時偵測 detail.php 與 disp.php
+                                href = l['href']
+                                if 'goods/detail.php' in href or 'goods/disp.php' in href:
+                                    target_urls.append(urljoin(resp.url, href))
+                            
+                            # 修正：如果網址直接轉跳，也檢查 disp.php
+                            if not target_urls:
+                                if 'goods/detail.php' in resp.url or 'goods/disp.php' in resp.url:
+                                    target_urls.append(resp.url)
                         except: pass
                     
                     img_urls = []
