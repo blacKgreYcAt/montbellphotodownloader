@@ -135,12 +135,9 @@ def extract_color_code(filename):
     假設格式: 1111222_NV.jpg -> NV
     """
     try:
-        # 移除副檔名
         name_without_ext = os.path.splitext(filename)[0]
-        # 如果包含底線，取最後一段
         if '_' in name_without_ext:
             parts = name_without_ext.split('_')
-            # 排除像是 '1', '2' 這種流水號，如果最後一段是純數字，取倒數第二段
             last_part = parts[-1]
             if last_part.isdigit() and len(parts) > 1:
                 return parts[-2]
@@ -175,7 +172,16 @@ if uploaded_file:
         with col1:
             batch_options = [f"📦 第 {i+1} 批 (型號 {i*BATCH_SIZE+1} - {min((i+1)*BATCH_SIZE, total_items)})" for i in range(total_batches)]
             selected_batch_str = st.selectbox("選擇批次", batch_options)
-            batch_index = int(selected_batch_str.split(' ')[1]) - 1
+            
+            # [修正] 使用 Regex 抓取第一個數字，避免抓到中文或符號
+            try:
+                # 這裡會抓到字串中的第一個數字，例如 "📦 第 1 批" 會抓到 "1"
+                batch_number = int(re.search(r'\d+', selected_batch_str).group())
+                batch_index = batch_number - 1
+            except Exception as e:
+                st.error(f"批次解析錯誤: {e}")
+                batch_index = 0
+
             start_idx = batch_index * BATCH_SIZE
             end_idx = min((batch_index + 1) * BATCH_SIZE, total_items)
             batch_df = df.iloc[start_idx:end_idx]
@@ -203,7 +209,6 @@ if uploaded_file:
             log_area = st.empty()
             logs = []
             
-            # 報表資料列表
             report_data = []
             
             zip_buffer = io.BytesIO()
@@ -211,17 +216,14 @@ if uploaded_file:
             
             with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
                 
-                # 遍歷批次
                 for i, (orig_idx, row) in enumerate(batch_df.iterrows()):
                     model_id = str(row[model_col]).strip()
                     if not model_id or model_id == 'nan': continue
                     
-                    # 更新進度
                     progress = (i + 1) / len(batch_df)
                     progress_bar.progress(progress)
                     status_text.text(f"正在處理: {model_id}")
                     
-                    # 獲取 URLs (同前次邏輯)
                     target_urls = []
                     if url_col and pd.notna(row[url_col]):
                         u = str(row[url_col]).strip()
@@ -249,7 +251,6 @@ if uploaded_file:
                     
                     img_urls = list(set(img_urls))
                     
-                    # 開始下載並收集顏色
                     item_colors = set()
                     item_img_count = 0
                     
@@ -258,22 +259,18 @@ if uploaded_file:
                             time.sleep(0.5)
                             ir = requests.get(url, headers=get_headers(), timeout=10)
                             if ir.status_code == 200:
-                                # 決定檔名
                                 parsed_path = urlparse(url).path
                                 fname = os.path.basename(parsed_path)
                                 if not fname: fname = f"{model_id}_{idx_img}.jpg"
                                 
-                                # 寫入 ZIP
                                 zf.writestr(f"{model_id}/{fname}", ir.content)
                                 item_img_count += 1
                                 
-                                # 提取顏色
                                 color = extract_color_code(fname)
                                 if color:
                                     item_colors.add(color)
                         except: pass
                     
-                    # 記錄到報表
                     colors_str = ",".join(sorted(list(item_colors))) if item_colors else "無/未識別"
                     
                     report_data.append({
@@ -290,20 +287,15 @@ if uploaded_file:
                         logs.append(f"⚠️ {model_id}: 無圖片")
                     log_area.code("\n".join(logs[-3:]))
 
-                # --- 生成 Excel 報表並寫入 ZIP ---
                 if report_data:
                     df_report = pd.DataFrame(report_data)
                     with io.BytesIO() as excel_buffer:
-                        # 使用 ExcelWriter 引擎
                         with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
                             df_report.to_excel(writer, index=False, sheet_name='下載摘要')
-                        
-                        # 將 Excel 存入 ZIP 根目錄
                         zf.writestr(f"報表_第{batch_index+1}批.xlsx", excel_buffer.getvalue())
                     logs.append(f"📊 已生成報表: 報表_第{batch_index+1}批.xlsx")
                     log_area.code("\n".join(logs[-3:]))
 
-            # 完成
             status_text.text("✅ 本批次處理完成！")
             progress_bar.progress(100)
             zip_buffer.seek(0)
